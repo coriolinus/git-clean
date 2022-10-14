@@ -142,3 +142,20 @@ pub async fn clean_branches(path: impl AsRef<Path>, logger: slog::Logger) -> Res
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn can_get_prs_by_branch_name() {
+        let octocrab = octocrab::instance();
+
+        let page = get_pr_page(octocrab, "coriolinus", "counter-rs", "index", 2)
+            .await
+            .unwrap();
+
+        let count = page.total_count.unwrap_or_else(|| page.items.len() as _);
+        assert_eq!(count, 1);
+    }
+}
