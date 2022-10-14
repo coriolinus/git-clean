@@ -37,7 +37,9 @@ async fn get_pr_page(
     branch_name: &str,
     limit: impl Into<Option<u8>>,
 ) -> Result<Page<PullRequest>, Error> {
+    // Github API specifies a maximum of 100 items returned per page
     let limit = limit.into().unwrap_or(100);
+
     octocrab
         .pulls(owner, repo_name)
         .list()
@@ -145,10 +147,14 @@ pub async fn clean_branches(path: impl AsRef<Path>, logger: slog::Logger) -> Res
 
 #[cfg(test)]
 mod tests {
+    // use std::io::Write;
+
     use super::*;
 
+    // this can go wrong if someone ever creates another PR with that name
+    // in that repo, but for now we'll assume that won't happen
     #[tokio::test]
-    async fn can_get_prs_by_branch_name() {
+    async fn get_pr_by_branch_name() {
         let octocrab = octocrab::instance();
 
         let page = get_pr_page(octocrab, "coriolinus", "counter-rs", "index", 2)
@@ -156,6 +162,19 @@ mod tests {
             .unwrap();
 
         let count = page.total_count.unwrap_or_else(|| page.items.len() as _);
+
+        // let file = std::fs::File::create("prs").unwrap();
+        // let mut buf = std::io::BufWriter::new(file);
+        // write!(buf, "{:#?}", &page.items).unwrap();
+        // buf.flush().unwrap();
+
         assert_eq!(count, 1);
+        assert!(page.items[0]
+            .head
+            .label
+            .as_ref()
+            .unwrap()
+            .ends_with("index"));
+        assert_eq!(page.items[0].number, 9);
     }
 }
