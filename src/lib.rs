@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc};
+use std::{ops::Deref, path::Path};
 
 use futures::TryStreamExt;
 use git2::{BranchType, Repository};
@@ -6,7 +6,7 @@ use lazy_static::lazy_static;
 use octocrab::{
     models::{pulls::PullRequest, IssueState},
     params::State,
-    Octocrab,
+    Octocrab, Page,
 };
 use regex::Regex;
 use slog::o;
@@ -30,25 +30,34 @@ fn parse_git_url(url: &str) -> Option<(&str, &str)> {
     Some((org, repo))
 }
 
+async fn get_pr_page(
+    octocrab: impl Deref<Target = Octocrab>,
+    owner: &str,
+    repo_name: &str,
+    branch_name: &str,
+    limit: impl Into<Option<u8>>,
+) -> Result<Page<PullRequest>, Error> {
+    let limit = limit.into().unwrap_or(100);
+    octocrab
+        .pulls(owner, repo_name)
+        .list()
+        // TODO: this isn't working properly; it's returning all branches, not just the ones matching the branch name.
+        .head(branch_name)
+        .state(State::All)
+        .per_page(limit)
+        .send()
+        .await
+        .context("get pull requests for a branch")
+}
+
 async fn get_prs(
-    octocrab: &Arc<Octocrab>,
+    octocrab: impl Deref<Target = Octocrab>,
     owner: &str,
     repo_name: &str,
     branch_name: &str,
 ) -> Result<Vec<PullRequest>, Error> {
     octocrab
-        .all_pages(
-            octocrab
-                .pulls(owner, repo_name)
-                .list()
-                // TODO: this isn't working properly; it's returning all branches, not just the ones matching the branch name.
-                .head(branch_name)
-                .state(State::All)
-                .per_page(100)
-                .send()
-                .await
-                .context("get pull requests for a branch")?,
-        )
+        .all_pages(get_pr_page(&*octocrab, owner, repo_name, branch_name, None).await?)
         .await
         .context("get rest of pages for pull requests for a branch")
         .map_err(Into::into)
@@ -104,7 +113,7 @@ pub async fn clean_branches(path: impl AsRef<Path>, logger: slog::Logger) -> Res
 
             let logger = logger.new(o!("branch name" => branch_name.to_string()));
 
-            let prs = get_prs(&octocrab, owner, repo_name, branch_name).await?;
+            let prs = get_prs(octocrab, owner, repo_name, branch_name).await?;
 
             slog::trace!(logger, "got prs"; "qty" => prs.len());
 
