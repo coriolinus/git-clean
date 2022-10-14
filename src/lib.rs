@@ -3,11 +3,7 @@ use std::{ops::Deref, path::Path};
 use futures::TryStreamExt;
 use git2::{BranchType, Repository};
 use lazy_static::lazy_static;
-use octocrab::{
-    models::{pulls::PullRequest, IssueState},
-    params::State,
-    Octocrab, Page,
-};
+use octocrab::{models::issues::Issue, Octocrab, Page};
 use regex::Regex;
 use slog::o;
 
@@ -36,20 +32,19 @@ async fn get_pr_page(
     repo_name: &str,
     branch_name: &str,
     limit: impl Into<Option<u8>>,
-) -> Result<Page<PullRequest>, Error> {
+) -> Result<Page<Issue>, Error> {
     // Github API specifies a maximum of 100 items returned per page
     let limit = limit.into().unwrap_or(100);
 
     octocrab
-        .pulls(owner, repo_name)
-        .list()
-        // TODO: this isn't working properly; it's returning all branches, not just the ones matching the branch name.
-        .head(branch_name)
-        .state(State::All)
+        .search()
+        .issues_and_pull_requests(&format!(
+            "is:pr repo:{owner}/{repo_name} head:{branch_name}"
+        ))
         .per_page(limit)
         .send()
         .await
-        .context("get pull requests for a branch")
+        .context("search for pull requests by branch")
 }
 
 async fn get_prs(
@@ -57,7 +52,7 @@ async fn get_prs(
     owner: &str,
     repo_name: &str,
     branch_name: &str,
-) -> Result<Vec<PullRequest>, Error> {
+) -> Result<Vec<Issue>, Error> {
     octocrab
         .all_pages(get_pr_page(&*octocrab, owner, repo_name, branch_name, None).await?)
         .await
@@ -129,12 +124,12 @@ pub async fn clean_branches(path: impl AsRef<Path>, logger: slog::Logger) -> Res
             // whether or not they're merged, they're no longer relevant.
             if prs
                 .into_iter()
-                .all(|pr| pr.state.unwrap_or(IssueState::Open) == IssueState::Closed)
+                .any(|pr| !pr.state.eq_ignore_ascii_case("closed"))
             {
+                slog::trace!(logger, "retaining branch");
+            } else {
                 slog::trace!(logger, "deleting branch");
                 branch.delete().context("deleting branch")?;
-            } else {
-                slog::trace!(logger, "retaining branch");
             }
 
             Ok(())
@@ -153,7 +148,11 @@ mod tests {
 
     // this can go wrong if someone ever creates another PR with that name
     // in that repo, but for now we'll assume that won't happen
+    //
+    // We ignore this test by default because it requires a network connection
+    // and can be a little slow / use up the API rate limit (60/hr).
     #[tokio::test]
+    #[ignore]
     async fn get_pr_by_branch_name() {
         let octocrab = octocrab::instance();
 
@@ -163,18 +162,7 @@ mod tests {
 
         let count = page.total_count.unwrap_or_else(|| page.items.len() as _);
 
-        // let file = std::fs::File::create("prs").unwrap();
-        // let mut buf = std::io::BufWriter::new(file);
-        // write!(buf, "{:#?}", &page.items).unwrap();
-        // buf.flush().unwrap();
-
         assert_eq!(count, 1);
-        assert!(page.items[0]
-            .head
-            .label
-            .as_ref()
-            .unwrap()
-            .ends_with("index"));
         assert_eq!(page.items[0].number, 9);
     }
 }
