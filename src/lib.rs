@@ -3,13 +3,16 @@ use std::{ops::Deref, path::Path};
 use futures::TryStreamExt;
 use git2::{BranchType, Repository};
 use lazy_static::lazy_static;
-use octocrab::{models::issues::Issue, Octocrab, Page};
+use octocrab::{models::issues::Issue, Octocrab, OctocrabBuilder, Page};
 use regex::Regex;
 use slog::o;
 
 mod error;
 use error::ContextErr;
 pub use error::Error;
+
+pub(crate) mod config;
+pub mod token;
 
 fn parse_git_url(url: &str) -> Option<(&str, &str)> {
     lazy_static! {
@@ -73,8 +76,19 @@ async fn get_prs(
 /// However, in state 4, we delete the branch: it is no longer relevant.
 ///
 /// Closing completed branches helps keep the local dev environment relevant.
-pub async fn clean_branches(path: impl AsRef<Path>, logger: slog::Logger) -> Result<(), Error> {
-    let octocrab = octocrab::instance();
+pub async fn clean_branches(
+    path: impl AsRef<Path>,
+    dry_run: bool,
+    personal_access_token: Option<String>,
+    logger: slog::Logger,
+) -> Result<(), Error> {
+    let octocrab = {
+        let mut builder = OctocrabBuilder::new();
+        if let Some(token) = personal_access_token {
+            builder = builder.personal_token(token);
+        }
+        builder.build().context("build octocrab instance")?
+    };
 
     let repo = Repository::open(path).context("open repo from path")?;
     let remotes = repo.remotes().context("list remotes")?;
@@ -110,7 +124,7 @@ pub async fn clean_branches(path: impl AsRef<Path>, logger: slog::Logger) -> Res
 
             let logger = logger.new(o!("branch name" => branch_name.to_string()));
 
-            let prs = get_prs(octocrab, owner, repo_name, branch_name).await?;
+            let prs = get_prs(&octocrab, owner, repo_name, branch_name).await?;
 
             slog::trace!(logger, "got prs"; "qty" => prs.len());
 
@@ -129,7 +143,9 @@ pub async fn clean_branches(path: impl AsRef<Path>, logger: slog::Logger) -> Res
                 slog::trace!(logger, "retaining branch");
             } else {
                 slog::trace!(logger, "deleting branch");
-                branch.delete().context("deleting branch")?;
+                if !dry_run {
+                    branch.delete().context("deleting branch")?;
+                }
             }
 
             Ok(())

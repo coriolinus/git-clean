@@ -1,6 +1,6 @@
 use color_eyre::Result;
 use ezcli::{flag, option};
-use git_clean::clean_branches;
+use git_clean::{clean_branches, token};
 use slog::Logger;
 
 fn slog_init() -> Logger {
@@ -23,15 +23,21 @@ async fn main() -> Result<()> {
                 path.file_name()
                     .map(|filename| filename.to_string_lossy().into_owned())
             })
-            .unwrap_or("git-clean".into());
+            .unwrap_or_else(|| "git-clean".into());
 
-        println!("usage: {my_name} [-p path_to_repo]");
+        println!(
+            "usage: {my_name} [--personal-access-token TOKEN] [--path path_to_repo] [--dry-run]"
+        );
     } else {
         color_eyre::install()?;
         let logger = slog_init();
 
-        let path = option!(-p, --path).unwrap_or(String::from("."));
-        clean_branches(path, logger).await?;
+        if let Some(token) = option!(--personal_access_token) {
+            token::save(token)?;
+        }
+
+        let path = option!(-p, --path).unwrap_or_else(|| String::from("."));
+        clean_branches(path, flag!(-d, --dry_run), token::load(), logger).await?;
     }
     Ok(())
 }
