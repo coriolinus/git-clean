@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
         }
 
         let path = option!(-p, --path).unwrap_or_else(|| String::from("."));
-        clean_branches(path, flag!(-d, --dry_run), token::load(), logger).await?;
+        clean_branches(path, flag!(-d, --dry_run), token::load(&logger), logger).await?;
     }
     Ok(())
 }

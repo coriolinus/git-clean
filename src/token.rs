@@ -1,5 +1,7 @@
 use std::borrow::Cow;
 
+use slog::Logger;
+
 use crate::config::Config;
 
 pub fn save<'a>(
@@ -10,8 +12,12 @@ pub fn save<'a>(
     config.save()
 }
 
-pub fn load() -> Option<String> {
+pub fn load(logger: &Logger) -> Option<String> {
     Config::load()
+        .map_err(|err| {
+            slog::warn!(logger, "failed to load configuration file"; "err" => err.to_string());
+            err
+        })
         .ok()
         .map(|config| config.personal_access_token)
 }
