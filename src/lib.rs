@@ -140,9 +140,9 @@ pub async fn clean_branches(
                 .into_iter()
                 .any(|pr| !pr.state.eq_ignore_ascii_case("closed"))
             {
-                slog::trace!(logger, "retaining branch");
+                slog::debug!(logger, "retaining branch");
             } else {
-                slog::trace!(logger, "deleting branch");
+                slog::info!(logger, "deleting branch");
                 if !dry_run {
                     branch.delete().context("deleting branch")?;
                 }

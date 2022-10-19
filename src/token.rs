@@ -15,7 +15,7 @@ pub fn save<'a>(
 pub fn load(logger: &Logger) -> Option<String> {
     Config::load()
         .map_err(|err| {
-            slog::warn!(logger, "failed to load configuration file"; "err" => err.to_string());
+            slog::info!(logger, "attempting to get personal access token from config"; "err" => err.to_string());
             err
         })
         .ok()
