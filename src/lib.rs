@@ -108,6 +108,9 @@ pub async fn clean_branches(
 
     slog::trace!(logger, "parsed url"; "owner" => owner, "repo" => repo_name);
 
+    // Unfortunately, the `Branch` type produced here is not `Send`, so we can't distribute this work across
+    // multiple threads. We can have concurrency, but not parallelism. Should still be enough to compact the
+    // amount of user time spent waiting for the github API requests.
     futures::stream::iter(
         repo.branches(Some(BranchType::Local))
             .context("list local branches")?
@@ -204,7 +207,7 @@ mod tests {
             .await
             .unwrap();
 
-        let count = page.total_count.unwrap_or_else(|| page.items.len() as _);
+        let count = page.total_count.unwrap_or(page.items.len() as _);
 
         assert_eq!(count, 1);
         assert_eq!(page.items[0].number, 9);
