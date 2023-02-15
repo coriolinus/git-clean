@@ -57,3 +57,17 @@ impl<T> ContextErr for Result<T, octocrab::Error> {
         })
     }
 }
+
+pub fn flatten_errors(err: &dyn std::error::Error) -> String {
+    let mut buffer = String::new();
+    flatten_errors_inner(err, &mut buffer);
+    buffer
+}
+
+fn flatten_errors_inner(err: &dyn std::error::Error, buffer: &mut String) {
+    buffer.push_str(&err.to_string());
+    if let Some(child) = err.source() {
+        buffer.push_str(": ");
+        flatten_errors_inner(child, buffer);
+    }
+}

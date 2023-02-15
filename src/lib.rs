@@ -1,6 +1,6 @@
 use std::{ops::Deref, path::Path};
 
-use futures::TryStreamExt;
+use futures::StreamExt;
 use git2::{BranchType, Repository};
 use lazy_static::lazy_static;
 use octocrab::{models::issues::Issue, Octocrab, OctocrabBuilder, Page};
@@ -10,6 +10,8 @@ use slog::o;
 mod error;
 use error::ContextErr;
 pub use error::Error;
+
+use crate::error::flatten_errors;
 
 pub(crate) mod config;
 pub mod token;
@@ -110,48 +112,74 @@ pub async fn clean_branches(
         repo.branches(Some(BranchType::Local))
             .context("list local branches")?
             .filter_map(|maybe_branch| maybe_branch.ok())
-            .map(|(branch, _branch_type)| Ok::<_, Error>(branch)),
+            .map(|(branch, _branch_type)| branch),
     )
-    .try_for_each_concurrent(None, |mut branch| {
-        let logger = logger.clone();
+    .for_each_concurrent(None, |branch| async {
         let octocrab = octocrab.clone();
 
-        async move {
-            let branch_name = branch
-                .name()
-                .context("get branch name")?
-                .ok_or(Error::BranchNameNotUtf8)?;
-
-            let logger = logger.new(o!("branch name" => branch_name.to_string()));
-
-            let prs = get_prs(&octocrab, owner, repo_name, branch_name).await?;
-
-            slog::trace!(logger, "got prs"; "qty" => prs.len());
-
-            // if there are no prs associated with this branch, then we shouldn't
-            // close it; it's local
-            if prs.is_empty() {
-                return Ok(());
-            }
-
-            // otherwise, if all prs associated with this branch are closed, then
-            // whether or not they're merged, they're no longer relevant.
-            if prs
-                .into_iter()
-                .any(|pr| !pr.state.eq_ignore_ascii_case("closed"))
-            {
-                slog::debug!(logger, "retaining branch");
-            } else {
-                slog::info!(logger, "deleting branch");
-                if !dry_run {
-                    branch.delete().context("deleting branch")?;
+        macro_rules! or_log {
+            ($e:expr, $context:expr) => {match $e {
+                Ok(t) => t,
+                Err(err) => {
+                    slog::error!(logger, $context; "err" => flatten_errors(&err));
+                    return;
                 }
-            }
+            }};
+        }
 
-            Ok(())
+        // we absolutely need a branch name for this to work
+        let branch_name =
+            or_log!(get_branch_name(&branch), "failed to extract branch name").to_owned();
+        let branch_name = &branch_name;
+        let prs = or_log!(
+            get_prs(&octocrab, owner, repo_name, branch_name).await,
+            "failed to get PRs associated with branch"
+        );
+
+        let logger = logger.new(o!("branch name" => branch_name.to_string()));
+        let move_logger = logger.clone();
+
+        if let Err(err) = delete_branch_if_prs_are_closed(branch, &prs, dry_run, move_logger) {
+            slog::error!(logger, "failed clean branch"; "err" => flatten_errors(&err));
         }
     })
-    .await?;
+    .await;
+
+    Ok(())
+}
+
+fn get_branch_name<'a>(branch: &'a git2::Branch<'a>) -> Result<&'a str, Error> {
+    branch
+        .name()
+        .context("get branch name from branch ref")?
+        .ok_or(Error::BranchNameNotUtf8)
+}
+
+fn delete_branch_if_prs_are_closed<'a>(
+    mut branch: git2::Branch<'a>,
+    prs: &'a [Issue],
+    dry_run: bool,
+    logger: slog::Logger,
+) -> Result<(), Error> {
+    // if there are no prs associated with this branch, then we shouldn't
+    // close it; it's local
+    if prs.is_empty() {
+        return Ok(());
+    }
+
+    // otherwise, if all prs associated with this branch are closed, then
+    // whether or not they're merged, they're no longer relevant.
+    if prs
+        .iter()
+        .any(|pr| !pr.state.eq_ignore_ascii_case("closed"))
+    {
+        slog::debug!(logger, "retaining branch");
+    } else {
+        slog::info!(logger, "deleting branch");
+        if !dry_run {
+            branch.delete().context("deleting branch")?;
+        }
+    }
 
     Ok(())
 }
