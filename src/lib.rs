@@ -154,7 +154,7 @@ pub async fn clean_branches(
             .map(|default| default == branch_name)
             .unwrap_or_default()
         {
-            slog::info!(
+            slog::debug!(
                 logger,
                 "skipping {branch_name} because it is the default branch",
                 branch_name = branch_name
