@@ -31,6 +31,19 @@ fn parse_git_url(url: &str) -> Option<(&str, &str)> {
     Some((org, repo))
 }
 
+async fn get_default_branch(
+    octocrab: impl Deref<Target = Octocrab>,
+    owner: &str,
+    repo_name: &str,
+) -> Option<String> {
+    octocrab
+        .repos(owner, repo_name)
+        .get()
+        .await
+        .ok()
+        .and_then(|repo| repo.default_branch)
+}
+
 async fn get_pr_page(
     octocrab: impl Deref<Target = Octocrab>,
     owner: &str,
@@ -108,6 +121,8 @@ pub async fn clean_branches(
 
     slog::trace!(logger, "parsed url"; "owner" => owner, "repo" => repo_name);
 
+    let maybe_default_branch = get_default_branch(&octocrab, owner, repo_name).await;
+
     // Unfortunately, the `Branch` type produced here is not `Send`, so we can't distribute this work across
     // multiple threads. We can have concurrency, but not parallelism. Should still be enough to compact the
     // amount of user time spent waiting for the github API requests.
@@ -118,8 +133,6 @@ pub async fn clean_branches(
             .map(|(branch, _branch_type)| branch),
     )
     .for_each_concurrent(None, |branch| async {
-        let octocrab = octocrab.clone();
-
         macro_rules! or_log {
             ($e:expr, $context:expr) => {match $e {
                 Ok(t) => t,
@@ -130,10 +143,25 @@ pub async fn clean_branches(
             }};
         }
 
-        // we absolutely need a branch name for this to work
         let branch_name =
             or_log!(get_branch_name(&branch), "failed to extract branch name").to_owned();
+
         let branch_name = &branch_name;
+
+        // we don't want to delete `main`
+        if maybe_default_branch
+            .as_ref()
+            .map(|default| default == branch_name)
+            .unwrap_or_default()
+        {
+            slog::info!(
+                logger,
+                "skipping {branch_name} because it is the default branch",
+                branch_name = branch_name
+            );
+            return;
+        }
+
         let prs = or_log!(
             get_prs(&octocrab, owner, repo_name, branch_name).await,
             "failed to get PRs associated with branch"
