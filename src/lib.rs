@@ -1,6 +1,6 @@
 use std::{ops::Deref, path::Path};
 
-use futures::StreamExt;
+use futures::{stream::FuturesUnordered, StreamExt};
 use git2::{BranchType, Repository};
 use lazy_static::lazy_static;
 use octocrab::{models::issues::Issue, Octocrab, OctocrabBuilder, Page};
@@ -10,8 +10,6 @@ use slog::o;
 mod error;
 use error::ContextErr;
 pub use error::Error;
-
-use crate::error::flatten_errors;
 
 pub(crate) mod config;
 pub mod token;
@@ -118,84 +116,96 @@ pub async fn clean_branches(
 
     let (owner, repo_name) = parse_git_url(remote.url().ok_or(Error::RemoteUrlNotUtf8)?)
         .ok_or(Error::RemoteUrlNotGithub)?;
-
     slog::trace!(logger, "parsed url"; "owner" => owner, "repo" => repo_name);
+    let (owner, repo_name) = (owner.to_owned(), repo_name.to_owned());
 
-    let maybe_default_branch = get_default_branch(&octocrab, owner, repo_name).await;
+    let maybe_default_branch = get_default_branch(&octocrab, &owner, &repo_name).await;
 
-    // Unfortunately, the `Branch` type produced here is not `Send`, so we can't distribute this work across
-    // multiple threads. We can have concurrency, but not parallelism. Should still be enough to compact the
-    // amount of user time spent waiting for the github API requests.
-    futures::stream::iter(
-        repo.branches(Some(BranchType::Local))
-            .context("list local branches")?
-            .filter_map(|maybe_branch| maybe_branch.ok())
-            .map(|(branch, _branch_type)| branch),
-    )
-    .for_each_concurrent(None, |branch| async {
-        macro_rules! or_log {
-            ($e:expr, $context:expr) => {match $e {
-                Ok(t) => t,
-                Err(err) => {
-                    slog::error!(logger, $context; "err" => flatten_errors(&err));
-                    return;
+    // Construct a bunch of independent futures which determine whether we should delete a particular branch.
+    // Each future returns either `Some(branch_name_to_delete)` or `None` if the input branch should not be deleted.
+    // It then gets spawned onto Tokio, so we have proper parallelism as well as concurrency, and then collected
+    // into a `FuturesUnordered`.
+    let mut join_handles = repo
+        .branches(Some(BranchType::Local))
+        .context("list local branches")?
+        .filter_map(|maybe_branch| maybe_branch.ok())
+        .filter_map(|(branch, _branch_type)| branch.name().ok().flatten().map(ToOwned::to_owned))
+        .map(|branch_name| {
+            // make some owned instances of things we can pass into the future
+            // all these clones should be relatively cheap
+            let logger = logger.new(o!("branch name" => branch_name.clone()));
+            let octocrab = octocrab.clone();
+            let owner = owner.clone();
+            let repo_name = repo_name.clone();
+            let maybe_default_branch = maybe_default_branch.clone();
+
+            tokio::spawn(async move {
+                if maybe_default_branch
+                    .as_ref()
+                    .map(|default| default == &branch_name)
+                    .unwrap_or_default()
+                {
+                    slog::debug!(
+                        logger,
+                        "skipping {branch_name} because it is the default branch",
+                        branch_name = &branch_name
+                    );
+                    return None;
                 }
-            }};
+
+                let prs = match get_prs(&octocrab, &owner, &repo_name, &branch_name).await {
+                    Ok(prs) => prs,
+                    Err(err) => {
+                        slog::error!(
+                            logger, "failed to get prs for branch";
+                            "err" => %err,
+                        );
+                        return None;
+                    }
+                };
+
+                should_delete_branch(&prs, logger).then_some(branch_name)
+            })
+        })
+        .collect::<FuturesUnordered<_>>();
+
+    // This is the idiom for completing all futures from a `FuturesUnordered`: just keep getting the next
+    // complete one until no more can complete.
+    while let Some(handle_result) = join_handles.next().await {
+        let maybe_delete_branch_name = match handle_result {
+            Ok(maybe_name) => maybe_name,
+            Err(err) => {
+                slog::warn!(
+                    logger, "task deciding whether to delete a branch did not complete successfully";
+                    "is_cancelled" => err.is_cancelled(),
+                    "is_panic" => err.is_panic(),
+                );
+                continue;
+            }
+        };
+
+        if let Some(branch_name) = maybe_delete_branch_name {
+            if let Ok(mut branch) = repo.find_branch(&branch_name, BranchType::Local) {
+                if !dry_run {
+                    if let Err(err) = branch.delete() {
+                        slog::error!(
+                            logger, "failed to delete branch {branch_name}", branch_name=&branch_name;
+                            "err" => %err,
+                        )
+                    }
+                }
+            }
         }
-
-        let branch_name =
-            or_log!(get_branch_name(&branch), "failed to extract branch name").to_owned();
-
-        let branch_name = &branch_name;
-
-        // we don't want to delete `main`
-        if maybe_default_branch
-            .as_ref()
-            .map(|default| default == branch_name)
-            .unwrap_or_default()
-        {
-            slog::debug!(
-                logger,
-                "skipping {branch_name} because it is the default branch",
-                branch_name = branch_name
-            );
-            return;
-        }
-
-        let prs = or_log!(
-            get_prs(&octocrab, owner, repo_name, branch_name).await,
-            "failed to get PRs associated with branch"
-        );
-
-        let logger = logger.new(o!("branch name" => branch_name.to_string()));
-        let move_logger = logger.clone();
-
-        if let Err(err) = delete_branch_if_prs_are_closed(branch, &prs, dry_run, move_logger) {
-            slog::error!(logger, "failed clean branch"; "err" => flatten_errors(&err));
-        }
-    })
-    .await;
+    }
 
     Ok(())
 }
 
-fn get_branch_name<'a>(branch: &'a git2::Branch<'a>) -> Result<&'a str, Error> {
-    branch
-        .name()
-        .context("get branch name from branch ref")?
-        .ok_or(Error::BranchNameNotUtf8)
-}
-
-fn delete_branch_if_prs_are_closed<'a>(
-    mut branch: git2::Branch<'a>,
-    prs: &'a [Issue],
-    dry_run: bool,
-    logger: slog::Logger,
-) -> Result<(), Error> {
+fn should_delete_branch(prs: &[Issue], logger: slog::Logger) -> bool {
     // if there are no prs associated with this branch, then we shouldn't
     // close it; it's local
     if prs.is_empty() {
-        return Ok(());
+        return false;
     }
 
     // otherwise, if all prs associated with this branch are closed, then
@@ -205,14 +215,11 @@ fn delete_branch_if_prs_are_closed<'a>(
         .any(|pr| !pr.state.eq_ignore_ascii_case("closed"))
     {
         slog::debug!(logger, "retaining branch");
+        false
     } else {
         slog::info!(logger, "deleting branch");
-        if !dry_run {
-            branch.delete().context("deleting branch")?;
-        }
+        true
     }
-
-    Ok(())
 }
 
 #[cfg(test)]
