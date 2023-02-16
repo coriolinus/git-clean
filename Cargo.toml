@@ -7,16 +7,16 @@ edition = "2021"
 color-eyre = "0.6.2"
 dirs = "4.0.0"
 ezcli = "0.4.0"
-futures = "0.3.24"
+futures = "0.3.26"
 git2 = "0.16.1"
 lazy_static = "1.4.0"
-octocrab = "0.17.0"
-regex = "1.6.0"
-serde = { version = "1.0.145", features = ["derive"] }
+octocrab = "0.18.1"
+regex = "1.7.1"
+serde = { version = "1.0.152", features = ["derive"] }
 slog = "2.7.0"
 slog-async = "2.7.0"
 slog-term = "2.9.0"
 smallstr = "0.3.0"
-thiserror = "1.0.37"
-tokio = { version = "1.24.2", features = ["full"] }
-toml = "0.5.9"
+thiserror = "1.0.38"
+tokio = { version = "1.25.0", features = ["full"] }
+toml = "0.7.2"

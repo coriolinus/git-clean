@@ -3,7 +3,10 @@ use std::{ops::Deref, path::Path};
 use futures::{stream::FuturesUnordered, StreamExt};
 use git2::{BranchType, Repository};
 use lazy_static::lazy_static;
-use octocrab::{models::issues::Issue, Octocrab, OctocrabBuilder, Page};
+use octocrab::{
+    models::{issues::Issue, IssueState},
+    Octocrab, OctocrabBuilder, Page,
+};
 use regex::Regex;
 use slog::o;
 
@@ -178,7 +181,7 @@ pub async fn clean_branches(
             Ok(maybe_name) => maybe_name,
             Err(err) => {
                 slog::warn!(
-                    logger, "task deciding whether to delete a branch did not complete successfully";
+                    logger, "task deciding whether to delete a branch did not complete";
                     "is_cancelled" => err.is_cancelled(),
                     "is_panic" => err.is_panic(),
                 );
@@ -213,10 +216,7 @@ fn should_delete_branch(prs: &[Issue], logger: slog::Logger) -> bool {
 
     // otherwise, if all prs associated with this branch are closed, then
     // whether or not they're merged, they're no longer relevant.
-    if prs
-        .iter()
-        .any(|pr| !pr.state.eq_ignore_ascii_case("closed"))
-    {
+    if prs.iter().any(|pr| pr.state != IssueState::Closed) {
         slog::debug!(logger, "retaining branch");
         false
     } else {
