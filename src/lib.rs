@@ -23,9 +23,9 @@ type SmallStr = smallstr::SmallString<[u8; 128]>;
 fn parse_git_url(url: &str) -> Option<(SmallStr, SmallStr)> {
     lazy_static! {
         static ref SSH_RE: Regex =
-            Regex::new(r"^git@github.com:(?P<org>\w+)/(?P<repo>\w+).git$").unwrap();
+            Regex::new(r"^git@github\.com:(?P<org>[-\w]+)/(?P<repo>[-\w]+)\.git$").unwrap();
         static ref HTTP_RE: Regex =
-            Regex::new(r"^https://github.com/(?P<org>\w+)/(?P<repo>\w+).git$").unwrap();
+            Regex::new(r"^https://github\.com/(?P<org>[-\w]+)/(?P<repo>[-\w]+)\.git$").unwrap();
     }
 
     let captures = SSH_RE.captures(url).or_else(|| HTTP_RE.captures(url))?;
