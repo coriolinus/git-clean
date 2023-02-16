@@ -29,10 +29,10 @@ fn parse_git_url(url: &str) -> Option<(SmallStr, SmallStr)> {
     }
 
     let captures = SSH_RE.captures(url).or_else(|| HTTP_RE.captures(url))?;
-    let org = captures.name("org")?.as_str();
-    let repo = captures.name("repo")?.as_str();
+    let org = SmallStr::from_str(captures.name("org")?.as_str());
+    let repo = SmallStr::from_str(captures.name("repo")?.as_str());
 
-    Some((SmallStr::from_str(org), SmallStr::from_str(repo)))
+    Some((org, repo))
 }
 
 async fn get_default_branch(
