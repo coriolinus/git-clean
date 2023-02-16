@@ -16,6 +16,7 @@ serde = { version = "1.0.145", features = ["derive"] }
 slog = "2.7.0"
 slog-async = "2.7.0"
 slog-term = "2.9.0"
+smallstr = "0.3.0"
 thiserror = "1.0.37"
 tokio = { version = "1.24.2", features = ["full"] }
 toml = "0.5.9"

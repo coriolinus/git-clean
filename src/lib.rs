@@ -14,7 +14,13 @@ pub use error::Error;
 pub(crate) mod config;
 pub mod token;
 
-fn parse_git_url(url: &str) -> Option<(&str, &str)> {
+// All the strings we really expect to deal with (owner, repo, branch name, etc)
+// are likely shorter than 128 bytes. However, we have to copy them fairly
+// frequently. We can reduce heap allocations and improve performance by storing
+// the string inline, only going to the heap on overflow.
+type SmallStr = smallstr::SmallString<[u8; 128]>;
+
+fn parse_git_url(url: &str) -> Option<(SmallStr, SmallStr)> {
     lazy_static! {
         static ref SSH_RE: Regex =
             Regex::new(r"^git@github.com:(?P<org>\w+)/(?P<repo>\w+).git$").unwrap();
@@ -26,20 +32,21 @@ fn parse_git_url(url: &str) -> Option<(&str, &str)> {
     let org = captures.name("org")?.as_str();
     let repo = captures.name("repo")?.as_str();
 
-    Some((org, repo))
+    Some((SmallStr::from_str(org), SmallStr::from_str(repo)))
 }
 
 async fn get_default_branch(
     octocrab: impl Deref<Target = Octocrab>,
     owner: &str,
     repo_name: &str,
-) -> Option<String> {
+) -> Option<SmallStr> {
     octocrab
         .repos(owner, repo_name)
         .get()
         .await
         .ok()
         .and_then(|repo| repo.default_branch)
+        .map(SmallStr::from_string)
 }
 
 async fn get_pr_page(
@@ -116,8 +123,7 @@ pub async fn clean_branches(
 
     let (owner, repo_name) = parse_git_url(remote.url().ok_or(Error::RemoteUrlNotUtf8)?)
         .ok_or(Error::RemoteUrlNotGithub)?;
-    slog::trace!(logger, "parsed url"; "owner" => owner, "repo" => repo_name);
-    let (owner, repo_name) = (owner.to_owned(), repo_name.to_owned());
+    slog::trace!(logger, "parsed url"; "owner" => %owner, "repo" => %repo_name);
 
     let maybe_default_branch = get_default_branch(&octocrab, &owner, &repo_name).await;
 
@@ -129,11 +135,11 @@ pub async fn clean_branches(
         .branches(Some(BranchType::Local))
         .context("list local branches")?
         .filter_map(|maybe_branch| maybe_branch.ok())
-        .filter_map(|(branch, _branch_type)| branch.name().ok().flatten().map(ToOwned::to_owned))
+        .filter_map(|(branch, _branch_type)| branch.name().ok().flatten().map(SmallStr::from_str))
         .map(|branch_name| {
             // make some owned instances of things we can pass into the future
             // all these clones should be relatively cheap
-            let logger = logger.new(o!("branch name" => branch_name.clone()));
+            let logger = logger.new(o!("branch name" => branch_name.to_string()));
             let octocrab = octocrab.clone();
             let owner = owner.clone();
             let repo_name = repo_name.clone();
@@ -145,11 +151,7 @@ pub async fn clean_branches(
                     .map(|default| default == &branch_name)
                     .unwrap_or_default()
                 {
-                    slog::debug!(
-                        logger,
-                        "skipping {branch_name} because it is the default branch",
-                        branch_name = &branch_name
-                    );
+                    slog::trace!(logger, "skipping the default branch");
                     return None;
                 }
 
@@ -189,7 +191,8 @@ pub async fn clean_branches(
                 if !dry_run {
                     if let Err(err) = branch.delete() {
                         slog::error!(
-                            logger, "failed to delete branch {branch_name}", branch_name=&branch_name;
+                            logger, "failed to delete branch";
+                            "branch_name" => %branch_name,
                             "err" => %err,
                         )
                     }
