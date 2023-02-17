@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+clap = { version = "4.1.6", features = ["derive"] }
 color-eyre = "0.6.2"
 dirs = "4.0.0"
-ezcli = "0.4.0"
 futures = "0.3.26"
 git2 = "0.16.1"
 lazy_static = "1.4.0"

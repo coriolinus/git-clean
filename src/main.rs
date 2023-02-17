@@ -1,5 +1,5 @@
+use clap::Parser;
 use color_eyre::Result;
-use ezcli::{flag, option};
 use git_clean::{clean_branches, token};
 use slog::Logger;
 
@@ -14,30 +14,37 @@ fn slog_init() -> Logger {
     slog::Logger::root(drain, o!())
 }
 
+#[derive(Debug, Parser)]
+struct Args {
+    /// Use and cache a GitHub Personal Access Token
+    ///
+    /// This must be a "classic" token and it must have at least
+    /// `repo` and `read:org` permissions assigned.
+    ///
+    /// To create a token, visit
+    /// <https://github.com/settings/tokens>.
+    #[arg(long, short = 'T')]
+    personal_access_token: Option<String>,
+
+    /// Do not actually edit the repository.
+    #[arg(short, long)]
+    dry_run: bool,
+
+    /// Path to the repository to clean
+    #[arg(default_value = ".")]
+    path: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    if flag!(-h, --help) {
-        let my_name = std::env::current_exe()
-            .ok()
-            .and_then(|path| {
-                path.file_name()
-                    .map(|filename| filename.to_string_lossy().into_owned())
-            })
-            .unwrap_or_else(|| "git-clean".into());
+    color_eyre::install()?;
+    let logger = slog_init();
+    let args = Args::parse();
 
-        println!(
-            "usage: {my_name} [--personal-access-token TOKEN] [--path path_to_repo] [--dry-run]"
-        );
-    } else {
-        color_eyre::install()?;
-        let logger = slog_init();
-
-        if let Some(token) = option!(--personal_access_token) {
-            token::save(token)?;
-        }
-
-        let path = option!(-p, --path).unwrap_or_else(|| String::from("."));
-        clean_branches(path, flag!(-d, --dry_run), token::load(&logger), logger).await?;
+    if let Some(token) = args.personal_access_token {
+        token::save(token)?;
     }
+
+    clean_branches(args.path, args.dry_run, token::load(&logger), logger).await?;
     Ok(())
 }
