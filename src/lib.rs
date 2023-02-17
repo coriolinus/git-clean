@@ -113,7 +113,7 @@ pub async fn clean_branches(
         builder.build().context("build octocrab instance")?
     };
 
-    let repo = Repository::open(path).context("open repo from path")?;
+    let repo = Repository::discover(path).context("open repo from path")?;
     let remotes = repo.remotes().context("list remotes")?;
     if remotes.len() != 1 {
         return Err(Error::WrongRemoteCount(remotes.len()));
