@@ -96,7 +96,7 @@ async fn get_prs(
 ///   exists, then it is active, and not deleted.
 /// - If it has been pushed to the remote and at least one PR referencing it
 ///   exists and all such PRs are closed, then it is stale, and is deleted.
-fn should_delete_branch(prs: &[Issue], logger: slog::Logger) -> bool {
+fn should_delete_branch(prs: &[Issue]) -> bool {
     // if there are no prs associated with this branch, then we shouldn't
     // close it; it's local
     if prs.is_empty() {
@@ -105,13 +105,7 @@ fn should_delete_branch(prs: &[Issue], logger: slog::Logger) -> bool {
 
     // otherwise, if all prs associated with this branch are closed, then
     // whether or not they're merged, they're no longer relevant.
-    if prs.iter().any(|pr| pr.state != IssueState::Closed) {
-        slog::debug!(logger, "retaining branch");
-        false
-    } else {
-        slog::info!(logger, "deleting branch");
-        true
-    }
+    !prs.iter().any(|pr| pr.state != IssueState::Closed)
 }
 
 /// Clean up git branches.
@@ -197,7 +191,13 @@ pub async fn clean_branches(
                     }
                 };
 
-                should_delete_branch(&prs, logger).then_some(branch_name)
+                if should_delete_branch(&prs) {
+                    slog::info!(logger, "deleting branch");
+                    Some(branch_name)
+                } else {
+                    slog::debug!(logger, "retaining branch");
+                    None
+                }
             })
         })
         .collect::<FuturesUnordered<_>>();
