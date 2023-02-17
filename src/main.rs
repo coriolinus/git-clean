@@ -14,7 +14,12 @@ fn slog_init() -> Logger {
     slog::Logger::root(drain, o!())
 }
 
+/// Clean outdated local git branches.
+///
+/// Removes local branches which have been pushed to the remote, and at least 1
+/// PR has been created for them, and all such PRs are now closed.
 #[derive(Debug, Parser)]
+#[command(version)]
 struct Args {
     /// Use and cache a GitHub Personal Access Token
     ///
