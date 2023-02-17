@@ -13,6 +13,16 @@ There are five possible cases for a local branch:
 In cases 1 - 4, we retain the branch: it is assumed to still be in development or otherwise relevant.
 However, in state 5, we delete the branch: it is no longer relevant.
 
+## Installation
+
+This project has no relation to the [`git-clean` on crates.io](https://crates.io/crates/git-clean).
+
+Instead:
+
+```bash
+cargo install --git https://github.com/coriolinus/git-clean
+```
+
 ## Authorization
 
 In the event that you want to use this on a private repo, you will need to authenticate your requests with a token.
