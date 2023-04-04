@@ -4,19 +4,19 @@ version = "1.0.0"
 edition = "2021"
 
 [dependencies]
-clap = { version = "4.1.6", features = ["derive"] }
+clap = { version = "4.2.1", features = ["derive"] }
 color-eyre = "0.6.2"
-dirs = "4.0.0"
-futures = "0.3.26"
-git2 = "0.16.1"
+dirs = "5.0.0"
+futures = "0.3.28"
+git2 = "0.17.0"
 lazy_static = "1.4.0"
-octocrab = "0.18.1"
-regex = "1.7.1"
-serde = { version = "1.0.152", features = ["derive"] }
+octocrab = "0.19.0"
+regex = "1.7.3"
+serde = { version = "1.0.159", features = ["derive"] }
 slog = "2.7.0"
 slog-async = "2.7.0"
 slog-term = "2.9.0"
 smallstr = "0.3.0"
-thiserror = "1.0.38"
-tokio = { version = "1.25.0", features = ["full"] }
-toml = "0.7.2"
+thiserror = "1.0.40"
+tokio = { version = "1.27.0", features = ["full"] }
+toml = "0.7.3"
